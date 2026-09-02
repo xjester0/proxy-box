@@ -7,6 +7,8 @@ services:
     restart: unless-stopped
     init: true
     network_mode: host
+    cap_add:
+      - NET_ADMIN
     environment:
       # required
       DOMAIN: example.com
@@ -18,12 +20,12 @@ services:
       # mieru
       MIERU_ENABLED: "1"
       MIERU_PORT_RANGE: 40000-40010
-      # telegram
+      # telegram desktop WEB (tproxy-server + official MTProxy)
       TELEGRAM_ENABLED: "1"
-      TELEGRAM_PORT: "48291"
+      TPROXY_SECRET: "" # empty - auto generate, 32 hex
       TELEGRAM_STATS_PORT: "8888"
-      TELEGRAM_EE_DOMAIN: www.google.com
-      TELEPROXY_SECRET: "" # empty - auto generate
+      MTPROXY_WORKERS: "1"
+      MTPROXY_MAX_CONNECTIONS: "4096"
       # vless
       VLESS_ENABLED: "1"
       VLESS_PORT: "59684"

@@ -29,8 +29,6 @@ DOMAIN="${DOMAIN:-}"
 PUBLIC_IP="${PUBLIC_IP:-UNKNOWN}"
 NOW=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 MIERU_PORT_RANGE="${MIERU_PORT_RANGE:-40000-40010}"
-TELEGRAM_PORT="${TELEGRAM_PORT:-48291}"
-TELEGRAM_EE_DOMAIN="${TELEGRAM_EE_DOMAIN:-www.google.com}"
 VLESS_PORT="${VLESS_PORT:-59684}"
 VLESS_DEST="${VLESS_DEST:-www.cloudflare.com}"
 
@@ -42,13 +40,13 @@ if enabled "${NAIVE_ENABLED:-1}"; then
   CARDS="${CARDS}
 <article class=\"card\">
   <header><div><p class=\"kicker\">HTTPS · 443</p><h2>NaiveProxy</h2></div></header>
-  <p>Трафик выглядит как обычный HTTPS на этот домен. Подходит для браузера и приложений с поддержкой naive.</p>
   $(uri_block "$naive_link")
-  <ol>
-    <li>Клиент: <b>naiveproxy</b>, NekoBox или Hiddify.</li>
-    <li>Тип прокси — Naive / HTTPS, вставьте ссылку целиком.</li>
-    <li>Домен должен открываться по HTTPS — сертификат выпускается автоматически.</li>
-  </ol>
+  <ul>
+    <li>host <code>$(html_esc "$DOMAIN")</code></li>
+    <li>port <code>443</code> · TLS</li>
+    <li>user <code>$(html_esc "$USER")</code></li>
+    <li>клиент: naiveproxy, NekoBox, Hiddify</li>
+  </ul>
 </article>"
 fi
 
@@ -58,42 +56,41 @@ if enabled "${MIERU_ENABLED:-1}"; then
   CARDS="${CARDS}
 <article class=\"card\">
   <header><div><p class=\"kicker\">TCP/UDP · $(html_esc "$MIERU_PORT_RANGE")</p><h2>mieru</h2></div></header>
-  <p>Свой протокол без TLS. Хорошо проходит там, где HTTPS-прокси уже режут.</p>
   $(uri_block "$mieru_link")
-  <ol>
-    <li>Клиент: официальный <b>mieru</b> или NekoBox с плагином mieru.</li>
-    <li>Импортируйте <code>mierus://</code> ссылку.</li>
-    <li>Откройте на фаерволе диапазон портов и TCP, и UDP.</li>
-  </ol>
+  <ul>
+    <li>host <code>$(html_esc "$PUBLIC_IP")</code></li>
+    <li>ports <code>$(html_esc "$MIERU_PORT_RANGE")</code> TCP и UDP</li>
+    <li>user <code>$(html_esc "$USER")</code></li>
+    <li>mtu <code>1400</code> · multiplexing HIGH</li>
+    <li>клиент: mieru, NekoBox</li>
+  </ul>
 </article>"
 fi
 
 if enabled "${TELEGRAM_ENABLED:-1}"; then
-  ee_hex=$(printf '%s' "$TELEGRAM_EE_DOMAIN" | xxd -p | tr -d ' \n')
-  tg_secret="ee${TELEPROXY_SECRET}${ee_hex}"
-  tg_http="https://t.me/proxy?server=${PUBLIC_IP}&port=${TELEGRAM_PORT}&secret=${tg_secret}"
-  tg_app="tg://proxy?server=${PUBLIC_IP}&port=${TELEGRAM_PORT}&secret=${tg_secret}"
-  PORTS="${PORTS}, ${TELEGRAM_PORT}/tcp"
+  tg_http="https://t.me/webproxy?server=${DOMAIN}&secret=${TPROXY_SECRET}"
+  tg_app="tg://webproxy?server=${DOMAIN}&secret=${TPROXY_SECRET}"
   qr=""
   qr_file=$(mktemp)
   if qrencode -o "$qr_file" -t PNG -s 5 -m 1 "$tg_http" 2>/dev/null; then
     qr_b64=$(base64 -w0 "$qr_file")
-    qr="<img class=\"qr\" src=\"data:image/png;base64,${qr_b64}\" alt=\"QR Telegram proxy\" width=\"168\" height=\"168\">"
+    qr="<img class=\"qr\" src=\"data:image/png;base64,${qr_b64}\" alt=\"QR\" width=\"168\" height=\"168\">"
   fi
   rm -f "$qr_file"
   CARDS="${CARDS}
 <article class=\"card\">
-  <header><div><p class=\"kicker\">MTProto · $(html_esc "$TELEGRAM_PORT")</p><h2>Telegram</h2></div></header>
-  <p>Teleproxy с Fake-TLS. Откройте ссылку в Telegram — прокси подставится сам. Нужен свежий клиент Telegram (после обновления Fake-TLS в августе 2026).</p>
+  <header><div><p class=\"kicker\">WEB · 443</p><h2>Telegram Desktop</h2></div></header>
   <div class=\"split\">
     <div>
-      $(uri_block "$tg_http" "Скопировать t.me")
-      $(uri_block "$tg_app" "Скопировать tg://")
-      <ol>
-        <li>На телефоне откройте ссылку — Telegram предложит «Использовать прокси».</li>
-        <li>Либо Настройки → Данные и память → Прокси → добавить.</li>
-        <li>Прокси работает только внутри Telegram, не для всего устройства.</li>
-      </ol>
+      $(uri_block "$DOMAIN" "Hostname")
+      $(uri_block "$TPROXY_SECRET" "Secret")
+      $(uri_block "$tg_http" "t.me")
+      $(uri_block "$tg_app" "tg://")
+      <ul>
+        <li>тип WEB · hostname без схемы и порта</li>
+        <li>secret 32 hex · TLS 443</li>
+        <li>клиент: Telegram Desktop</li>
+      </ul>
     </div>
     ${qr}
   </div>
@@ -103,6 +100,7 @@ fi
 if enabled "${VLESS_ENABLED:-1}"; then
   vless_link=""
   vless_sni="$VLESS_DEST"
+  vless_fp="${VLESS_FP:-edge}"
   if [ -f "$VLESS_ENV" ]; then
     vless_link=$(sed -n 's/^link=//p' "$VLESS_ENV" | sed "s/HOST/${PUBLIC_IP}/g")
     vless_sni=$(sed -n 's/^sni=//p' "$VLESS_ENV")
@@ -111,20 +109,21 @@ if enabled "${VLESS_ENABLED:-1}"; then
   fi
   vless_fp="${vless_fp:-${VLESS_FP:-edge}}"
   PORTS="${PORTS}, ${VLESS_PORT}/tcp"
-  vless_block="<p class=\"muted\">ещё не готово — перезапустите контейнер</p>"
+  vless_block="<p class=\"muted\">нет client.env — перезапустите контейнер</p>"
   if [ -n "$vless_link" ]; then
     vless_block=$(uri_block "$vless_link")
   fi
   CARDS="${CARDS}
 <article class=\"card\">
   <header><div><p class=\"kicker\">REALITY · $(html_esc "$VLESS_PORT")</p><h2>VLESS</h2></div></header>
-  <p>Маскировка под TLS $(html_esc "$vless_sni"). Универсальный вариант для телефонов и десктопа.</p>
   ${vless_block}
-  <ol>
-    <li>Клиент: v2rayN, v2rayNG, Streisand, Hiddify, Happ.</li>
-    <li>Импорт из буфера обмена — вставьте URI <code>vless://</code>.</li>
-    <li>Fingerprint: <code>$(html_esc "$vless_fp")</code>, flow — <code>xtls-rprx-vision</code>.</li>
-  </ol>
+  <ul>
+    <li>host <code>$(html_esc "$PUBLIC_IP")</code></li>
+    <li>port <code>$(html_esc "$VLESS_PORT")</code></li>
+    <li>security <code>reality</code> · flow <code>xtls-rprx-vision</code></li>
+    <li>sni <code>$(html_esc "$vless_sni")</code> · fp <code>$(html_esc "$vless_fp")</code></li>
+    <li>клиент: v2rayN, v2rayNG, Streisand, Hiddify, Happ</li>
+  </ul>
 </article>"
 fi
 
@@ -140,7 +139,7 @@ cat >"$OUT" <<EOF
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow">
-<title>Доступ — $(html_esc "$DOMAIN")</title>
+<title>$(html_esc "$DOMAIN")</title>
 <style>
 ${css}
 </style>
@@ -149,20 +148,18 @@ ${css}
 <main class="wrap">
   <header class="top">
     <div>
-      <p class="brand">proxy-box</p>
-      <h1>Доступ</h1>
+      <p class="brand">access</p>
+      <h1>$(html_esc "$DOMAIN")</h1>
     </div>
     <p class="meta">
-      $(html_esc "$DOMAIN")<br>
       <code>$(html_esc "$PUBLIC_IP")</code><br>
       $(html_esc "$NOW")
     </p>
   </header>
-  <p class="lead">Ссылки этого сервера. Страница собирается при старте контейнера.</p>
   <div class="grid">
     ${CARDS}
   </div>
-  <p class="ports">На фаерволе должны быть открыты: <code>$(html_esc "$PORTS")</code></p>
+  <p class="ports">firewall: <code>$(html_esc "$PORTS")</code></p>
 </main>
 <script>
 document.querySelectorAll("[data-copy]").forEach(function (btn) {

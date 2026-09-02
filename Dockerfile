@@ -8,11 +8,35 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     /go/bin/xcaddy build \
       --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@${FORWARDPROXY_REF}
 
+FROM golang:1.25-bookworm AS tproxy
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
+WORKDIR /src
+RUN git clone --depth 1 https://github.com/telegramdesktop/tproxy-server.git .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -trimpath -ldflags="-s -w" -o /tproxy-server ./cmd/tproxy-server
+
+FROM debian:bookworm AS mtproxy
+ARG TARGETARCH
+ARG MTPROXY_COMMIT=f36d8af769ffaeac36978d38c2c0f6d1104c2137
+ARG MTPROXY_CHECKSUM=919795c416b870670841a21d1930ad97a24c7b84b9eb8c6f9e3de32f2fdf4655
+RUN test "${TARGETARCH}" = "amd64"
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl make gcc g++ libssl-dev zlib1g-dev \
+ && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+RUN curl -fsSL -o mtproxy.tar.gz \
+      "https://github.com/TelegramMessenger/MTProxy/archive/${MTPROXY_COMMIT}.tar.gz" \
+ && echo "${MTPROXY_CHECKSUM}  mtproxy.tar.gz" | sha256sum -c - \
+ && tar -xzf mtproxy.tar.gz --strip-components=1 \
+ && make -j"$(nproc)" \
+ && test -x objs/bin/mtproto-proxy
+
 FROM debian:bookworm-slim AS bins
 ARG TARGETARCH
 ARG MITA_VERSION=3.36.0
 ARG XRAY_VERSION=25.12.8
-ARG TELEPROXY_VERSION=4.16.1
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/*
@@ -34,24 +58,25 @@ RUN set -eu; \
       "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${xray_zip}"; \
     unzip -o /tmp/xray.zip xray -d /out; \
     chmod +x /out/xray
-RUN set -eu; \
-    curl -fsSL -o /out/teleproxy \
-      "https://github.com/teleproxy/teleproxy/releases/download/v${TELEPROXY_VERSION}/teleproxy-linux-${TARGETARCH}"; \
-    chmod +x /out/teleproxy
+
+FROM ghcr.io/project-zot/zot:v2.1.2 AS zot
 
 FROM debian:bookworm-slim
 LABEL org.opencontainers.image.title="proxy-box" \
-      org.opencontainers.image.description="NaiveProxy, mieru, Teleproxy and VLESS Reality"
+      org.opencontainers.image.description="NaiveProxy, mieru, tproxy-server and VLESS Reality"
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       ca-certificates curl openssl qrencode xxd iproute2 procps \
+      libssl3 zlib1g nftables \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /opt/proxy-box /data /var/run/mita /var/lib/mita
+ && mkdir -p /opt/proxy-box /data /var/run/mita /var/lib/mita /etc/tproxy-server
 
 COPY --from=caddy /build/caddy /usr/local/bin/caddy
+COPY --from=tproxy /tproxy-server /usr/local/bin/tproxy-server
+COPY --from=mtproxy /src/objs/bin/mtproto-proxy /usr/local/bin/mtproto-proxy
 COPY --from=bins /out/mita /usr/local/bin/mita
 COPY --from=bins /out/xray /usr/local/bin/xray
-COPY --from=bins /out/teleproxy /usr/local/bin/teleproxy
+COPY --from=zot /usr/bin/zot /usr/local/bin/zot
 COPY app/ /opt/proxy-box/
 
 RUN chmod +x /opt/proxy-box/entrypoint.sh /opt/proxy-box/gen-access.sh /usr/local/bin/*

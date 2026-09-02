@@ -43,6 +43,24 @@ esc_caddy() {
   printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
 }
 
+esc_json() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+wait_http() {
+  local url=$1
+  local i=0 code
+  while [ "$i" -lt 50 ]; do
+    code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 2 "$url" 2>/dev/null || true)
+    case "$code" in
+      2*|3*|401|403) return 0 ;;
+    esac
+    i=$((i + 1))
+    sleep 0.2
+  done
+  return 1
+}
+
 term() {
   trap - INT TERM EXIT
   if [ -n "${PIDS}" ]; then
@@ -53,11 +71,13 @@ term() {
 trap term INT TERM EXIT
 
 DOMAIN="${DOMAIN//$'\r'/}"
+DOMAIN=$(printf '%s' "$DOMAIN" | tr '[:upper:]' '[:lower:]')
 ACME_EMAIL="${ACME_EMAIL//$'\r'/}"
 USER="${USER//$'\r'/}"
 PASSWORD="${PASSWORD//$'\r'/}"
 ENV_USER="$USER"
 ENV_PASSWORD="$PASSWORD"
+ENV_TPROXY_SECRET=$(printf '%s' "${TPROXY_SECRET:-}" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
 
 require DOMAIN
 require ACME_EMAIL
@@ -69,9 +89,9 @@ MIERU_ENABLED="${MIERU_ENABLED:-1}"
 TELEGRAM_ENABLED="${TELEGRAM_ENABLED:-1}"
 VLESS_ENABLED="${VLESS_ENABLED:-1}"
 MIERU_PORT_RANGE="${MIERU_PORT_RANGE:-40000-40010}"
-TELEGRAM_PORT="${TELEGRAM_PORT:-48291}"
 TELEGRAM_STATS_PORT="${TELEGRAM_STATS_PORT:-8888}"
-TELEGRAM_EE_DOMAIN="${TELEGRAM_EE_DOMAIN:-www.google.com}"
+MTPROXY_WORKERS="${MTPROXY_WORKERS:-1}"
+MTPROXY_MAX_CONNECTIONS="${MTPROXY_MAX_CONNECTIONS:-4096}"
 VLESS_PORT="${VLESS_PORT:-59684}"
 VLESS_DEST="${VLESS_DEST:-www.cloudflare.com}"
 VLESS_FP="${VLESS_FP:-edge}"
@@ -80,7 +100,8 @@ case "$VLESS_FP" in
   *) VLESS_FP=edge ;;
 esac
 
-mkdir -p "${DATA}/caddy" "${DATA}/vless" "${DATA}/teleproxy" "${DATA}/www" \
+mkdir -p "${DATA}/caddy" "${DATA}/vless" "${DATA}/tproxy" "${DATA}/mtproxy" \
+  "${DATA}/zot/store" "${DATA}/www" \
   /var/run/mita /var/lib/mita
 chmod 777 /var/run/mita /var/lib/mita || true
 
@@ -93,21 +114,45 @@ fi
 
 USER="$ENV_USER"
 PASSWORD="$ENV_PASSWORD"
-TELEPROXY_SECRET="${TELEPROXY_SECRET:-$(rand_hex 16)}"
+if printf '%s' "$ENV_TPROXY_SECRET" | grep -Eq '^[0-9a-f]{32}$'; then
+  TPROXY_SECRET="$ENV_TPROXY_SECRET"
+else
+  TPROXY_SECRET="${TPROXY_SECRET:-${TELEPROXY_SECRET:-}}"
+  TPROXY_SECRET=$(printf '%s' "$TPROXY_SECRET" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+  if ! printf '%s' "$TPROXY_SECRET" | grep -Eq '^[0-9a-f]{32}$'; then
+    TPROXY_SECRET="$(rand_hex 16)"
+  fi
+fi
 PUBLIC_IP="$(detect_ip)"
 [ -n "${PUBLIC_IP}" ] || PUBLIC_IP="UNKNOWN"
 
 umask 077
 cat >"$STATE" <<EOF
-TELEPROXY_SECRET=${TELEPROXY_SECRET}
+TPROXY_SECRET=${TPROXY_SECRET}
 EOF
 chmod 600 "$STATE"
 
 export DOMAIN ACME_EMAIL USER PASSWORD PUBLIC_IP
 export NAIVE_ENABLED MIERU_ENABLED TELEGRAM_ENABLED VLESS_ENABLED
 export MIERU_PORT_RANGE
-export TELEPROXY_SECRET TELEGRAM_PORT TELEGRAM_EE_DOMAIN TELEGRAM_STATS_PORT
+export TPROXY_SECRET TELEGRAM_STATS_PORT
 export VLESS_PORT VLESS_DEST VLESS_FP
+
+cat >"${DATA}/zot/config.json" <<EOF
+{
+  "distSpecVersion": "1.1.1",
+  "storage": { "rootDirectory": "${DATA}/zot/store" },
+  "http": {
+    "address": "127.0.0.1",
+    "port": "5000"
+  },
+  "log": { "level": "info" },
+  "extensions": {
+    "search": { "enable": true },
+    "ui": { "enable": true }
+  }
+}
+EOF
 
 if enabled "$VLESS_ENABLED"; then
   cfg="${DATA}/vless/config.json"
@@ -200,18 +245,47 @@ EOF
 fi
 
 if enabled "$TELEGRAM_ENABLED"; then
-  cat >"${DATA}/teleproxy/config.toml" <<EOF
-port = ${TELEGRAM_PORT}
-external_port = ${TELEGRAM_PORT}
-stats_port = ${TELEGRAM_STATS_PORT}
-http_stats = true
-workers = 1
-direct = true
-domain = "${TELEGRAM_EE_DOMAIN}"
-
-[[secret]]
-key = "${TELEPROXY_SECRET}"
+  umask 077
+  cat >"${DATA}/tproxy/config.json" <<EOF
+{
+  "public_hostname": "$(esc_json "$DOMAIN")",
+  "listen": "127.0.0.1:8080",
+  "admin_listen": "127.0.0.1:8081",
+  "public_upstream": "http://127.0.0.1:5000",
+  "profiles_file": "${DATA}/tproxy/profiles.json",
+  "enable_pprof": false
+}
 EOF
+  cat >"${DATA}/tproxy/profiles.json" <<EOF
+{
+  "profiles": [
+    {
+      "name": "default",
+      "secret": "${TPROXY_SECRET}",
+      "backend": "127.0.0.1:2398",
+      "carrier_mode": "https"
+    }
+  ]
+}
+EOF
+  chmod 600 "${DATA}/tproxy/config.json"
+  chmod 400 "${DATA}/tproxy/profiles.json"
+
+  tmp=$(mktemp -d)
+  if curl -fsSL --connect-timeout 10 --max-time 30 -o "$tmp/proxy-secret" https://core.telegram.org/getProxySecret \
+     && curl -fsSL --connect-timeout 10 --max-time 30 -o "$tmp/proxy-multi.conf" https://core.telegram.org/getProxyConfig \
+     && [ "$(wc -c < "$tmp/proxy-secret")" -eq 128 ]; then
+    mv "$tmp/proxy-secret" "${DATA}/mtproxy/proxy-secret"
+    mv "$tmp/proxy-multi.conf" "${DATA}/mtproxy/proxy-multi.conf"
+  else
+    echo "mtproxy config download failed, using cache if present" >&2
+  fi
+  rm -rf "$tmp"
+  if [ ! -f "${DATA}/mtproxy/proxy-secret" ] || [ ! -f "${DATA}/mtproxy/proxy-multi.conf" ]; then
+    echo "mtproxy proxy-secret/proxy-multi.conf missing" >&2
+    exit 1
+  fi
+  chmod 600 "${DATA}/mtproxy/proxy-secret" "${DATA}/mtproxy/proxy-multi.conf"
 fi
 
 ACCESS_HASH=$(caddy hash-password --plaintext "$PASSWORD" | tail -1)
@@ -229,6 +303,26 @@ EOF
 )
 fi
 
+if enabled "$TELEGRAM_ENABLED"; then
+  SITE_PROXY=$(cat <<'EOF'
+    handle {
+      reverse_proxy 127.0.0.1:8080 {
+        transport http {
+          response_header_timeout 40s
+        }
+      }
+    }
+EOF
+)
+else
+  SITE_PROXY=$(cat <<'EOF'
+    handle {
+      reverse_proxy 127.0.0.1:5000
+    }
+EOF
+)
+fi
+
 cat >"$CADDYFILE" <<EOF
 {
   order forward_proxy before reverse_proxy
@@ -240,11 +334,16 @@ cat >"$CADDYFILE" <<EOF
   admin off
   servers {
     protocols h1 h2
+    timeouts {
+      read_header 10s
+      read_body 60s
+    }
   }
 }
 
 ${DOMAIN} {
-  encode gzip
+  encode zstd gzip
+  header Strict-Transport-Security "max-age=31536000; includeSubDomains"
   route {
     handle /access* {
       basic_auth {
@@ -256,13 +355,17 @@ ${DOMAIN} {
       file_server
     }
 ${NAIVE_BLOCK}
-    handle {
-      root * ${ROOT}/decoy
-      file_server
-    }
+${SITE_PROXY}
   }
 }
 EOF
+
+zot serve "${DATA}/zot/config.json" &
+PIDS="${PIDS} $!"
+if ! wait_http "http://127.0.0.1:5000/v2/"; then
+  echo "zot not ready on 127.0.0.1:5000" >&2
+  exit 1
+fi
 
 if enabled "$MIERU_ENABLED"; then
   mita run &
@@ -280,8 +383,35 @@ if enabled "$MIERU_ENABLED"; then
 fi
 
 if enabled "$TELEGRAM_ENABLED"; then
-  teleproxy --config "${DATA}/teleproxy/config.toml" --allow-skip-dh &
+  if command -v nft >/dev/null 2>&1; then
+    cat >/etc/tproxy-server/firewall.nft <<NFT
+table inet tproxy_backend {
+  chain local_backend {
+    type filter hook input priority -10; policy accept;
+    iifname != "lo" tcp dport { 2398, ${TELEGRAM_STATS_PORT} } drop
+  }
+}
+NFT
+    nft delete table inet tproxy_backend 2>/dev/null || true
+    if ! nft -f /etc/tproxy-server/firewall.nft; then
+      echo "nft tproxy_backend failed; cap_add NET_ADMIN and drop 2398/${TELEGRAM_STATS_PORT} on the host" >&2
+    fi
+  fi
+  mtproto-proxy \
+    -p "${TELEGRAM_STATS_PORT}" \
+    -H 2398 \
+    -S "${TPROXY_SECRET}" \
+    --aes-pwd "${DATA}/mtproxy/proxy-secret" \
+    "${DATA}/mtproxy/proxy-multi.conf" \
+    -M "${MTPROXY_WORKERS}" \
+    -C "${MTPROXY_MAX_CONNECTIONS}" &
   PIDS="${PIDS} $!"
+  tproxy-server -config "${DATA}/tproxy/config.json" &
+  PIDS="${PIDS} $!"
+  if ! wait_http "http://127.0.0.1:8081/healthz"; then
+    echo "tproxy-server not ready on 127.0.0.1:8081" >&2
+    exit 1
+  fi
 fi
 
 if enabled "$VLESS_ENABLED"; then
