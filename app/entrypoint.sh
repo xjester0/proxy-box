@@ -300,7 +300,7 @@ if enabled "$NAIVE_ENABLED"; then
       basic_auth $(esc_caddy "$USER") $(esc_caddy "$PASSWORD")
       hide_ip
       hide_via
-      probe_resistance $(esc_caddy "$DOMAIN")
+      probe_resistance
     }
 EOF
 )
@@ -308,20 +308,16 @@ fi
 
 if enabled "$TELEGRAM_ENABLED"; then
   SITE_PROXY=$(cat <<'EOF'
-    handle {
-      reverse_proxy 127.0.0.1:8080 {
-        transport http {
-          response_header_timeout 40s
-        }
-      }
+  reverse_proxy 127.0.0.1:8080 {
+    transport http {
+      response_header_timeout 40s
     }
+  }
 EOF
 )
 else
   SITE_PROXY=$(cat <<'EOF'
-    handle {
-      reverse_proxy 127.0.0.1:5000
-    }
+  reverse_proxy 127.0.0.1:5000
 EOF
 )
 fi
@@ -347,19 +343,17 @@ cat >"$CADDYFILE" <<EOF
 ${DOMAIN} {
   encode zstd gzip
   header Strict-Transport-Security "max-age=31536000; includeSubDomains"
-  route {
-    handle /access* {
-      basic_auth {
-        $(esc_caddy "$USER") ${ACCESS_HASH}
-      }
-      header Cache-Control "no-store"
-      root * ${DATA}/www
-      rewrite * /access.html
-      file_server
+  handle /access* {
+    basic_auth {
+      $(esc_caddy "$USER") ${ACCESS_HASH}
     }
+    header Cache-Control "no-store"
+    root * ${DATA}/www
+    rewrite * /access.html
+    file_server
+  }
 ${NAIVE_BLOCK}
 ${SITE_PROXY}
-  }
 }
 EOF
 
