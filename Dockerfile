@@ -80,8 +80,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --home-dir /var/lib/mita --shell /usr/sbin/nologin mita \
  && useradd --system --uid 10002 --home-dir /nonexistent --shell /usr/sbin/nologin mtproxy \
- && mkdir -p /opt/proxy-box /data /var/run/mita /var/lib/mita /etc/tproxy-server \
- && chown mita:mita /var/run/mita /var/lib/mita
+ && mkdir -p /opt/proxy-box /data /var/run/mita /var/lib/mita /etc/mita /etc/tproxy-server \
+ && chown mita:mita /var/run/mita /var/lib/mita /etc/mita
 
 COPY --from=caddy /build/caddy /usr/local/bin/caddy
 COPY --from=tproxy /tproxy-server /usr/local/bin/tproxy-server

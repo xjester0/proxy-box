@@ -102,11 +102,11 @@ esac
 
 mkdir -p "${DATA}/caddy" "${DATA}/vless" "${DATA}/tproxy" "${DATA}/mtproxy" \
   "${DATA}/zot/store" "${DATA}/www" \
-  /var/run/mita /var/lib/mita
+  /var/run/mita /var/lib/mita /etc/mita
 if ! id mita >/dev/null 2>&1; then
   useradd --system --home-dir /var/lib/mita --shell /usr/sbin/nologin mita || true
 fi
-chown mita:mita /var/run/mita /var/lib/mita 2>/dev/null || chmod 777 /var/run/mita /var/lib/mita || true
+chown mita:mita /var/run/mita /var/lib/mita /etc/mita 2>/dev/null || chmod 777 /var/run/mita /var/lib/mita /etc/mita || true
 
 if [ -f "$STATE" ]; then
   set -a
@@ -368,10 +368,16 @@ if enabled "$MIERU_ENABLED"; then
   mita run &
   PIDS="${PIDS} $!"
   i=0
-  while [ "$i" -lt 50 ] && [ ! -S /var/run/mita/mita.sock ]; do
-    i=$((i + 1)); sleep 0.2
+  ready=0
+  while [ "$i" -lt 80 ]; do
+    if [ -S /var/run/mita/mita.sock ] && mita status >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    i=$((i + 1))
+    sleep 0.25
   done
-  if [ ! -S /var/run/mita/mita.sock ]; then
+  if [ "$ready" -ne 1 ]; then
     echo "mita socket not ready" >&2
     exit 1
   fi
