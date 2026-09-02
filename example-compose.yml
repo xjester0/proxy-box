@@ -33,7 +33,7 @@ services:
       VLESS_FP: edge
     ulimits:
       nofile:
-        soft: 65536
-        hard: 65536
+        soft: 1048576
+        hard: 1048576
     volumes:
       - ./data:/data
