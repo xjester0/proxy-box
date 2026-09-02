@@ -1,0 +1,37 @@
+name: proxy-box
+
+services:
+  proxy-box:
+    image: ghcr.io/xjester0/proxy-box:latest
+    pull_policy: always
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    environment:
+      # required
+      DOMAIN: example.com
+      ACME_EMAIL: admin@example.com
+      USER: admin
+      PASSWORD: changeme
+      # naive
+      NAIVE_ENABLED: "1"
+      # mieru
+      MIERU_ENABLED: "1"
+      MIERU_PORT_RANGE: 40000-40010
+      # telegram
+      TELEGRAM_ENABLED: "1"
+      TELEGRAM_PORT: "48291"
+      TELEGRAM_STATS_PORT: "8888"
+      TELEGRAM_EE_DOMAIN: www.google.com
+      TELEPROXY_SECRET: "" # empty - auto generate
+      # vless
+      VLESS_ENABLED: "1"
+      VLESS_PORT: "59684"
+      VLESS_DEST: www.cloudflare.com
+      VLESS_FP: edge
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - ./data:/data
