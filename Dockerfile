@@ -75,10 +75,12 @@ LABEL org.opencontainers.image.title="proxy-box" \
       org.opencontainers.image.description="NaiveProxy, mieru, tproxy-server and VLESS Reality"
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-      ca-certificates curl openssl qrencode xxd iproute2 procps \
+      ca-certificates curl openssl qrencode xxd iproute2 procps passwd \
       libssl3 zlib1g nftables \
  && rm -rf /var/lib/apt/lists/* \
- && mkdir -p /opt/proxy-box /data /var/run/mita /var/lib/mita /etc/tproxy-server
+ && useradd --system --uid 10001 --home-dir /var/lib/mita --shell /usr/sbin/nologin mita \
+ && mkdir -p /opt/proxy-box /data /var/run/mita /var/lib/mita /etc/tproxy-server \
+ && chown mita:mita /var/run/mita /var/lib/mita
 
 COPY --from=caddy /build/caddy /usr/local/bin/caddy
 COPY --from=tproxy /tproxy-server /usr/local/bin/tproxy-server

@@ -103,7 +103,10 @@ esac
 mkdir -p "${DATA}/caddy" "${DATA}/vless" "${DATA}/tproxy" "${DATA}/mtproxy" \
   "${DATA}/zot/store" "${DATA}/www" \
   /var/run/mita /var/lib/mita
-chmod 777 /var/run/mita /var/lib/mita || true
+if ! id mita >/dev/null 2>&1; then
+  useradd --system --home-dir /var/lib/mita --shell /usr/sbin/nologin mita || true
+fi
+chown mita:mita /var/run/mita /var/lib/mita 2>/dev/null || chmod 777 /var/run/mita /var/lib/mita || true
 
 if [ -f "$STATE" ]; then
   set -a
