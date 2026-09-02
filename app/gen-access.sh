@@ -23,6 +23,17 @@ uri_block() {
   printf '<div class="uri"><code>%s</code><button type="button" data-copy="%s">%s</button></div>\n' "$esc" "$esc" "$label"
 }
 
+qr_img() {
+  local payload=$1 alt=${2:-QR}
+  local qr_file qr_b64
+  qr_file=$(mktemp)
+  if qrencode -o "$qr_file" -t PNG -s 5 -m 1 "$payload" 2>/dev/null; then
+    qr_b64=$(base64 -w0 "$qr_file")
+    printf '<img class="qr" src="data:image/png;base64,%s" alt="%s" width="168" height="168">\n' "$qr_b64" "$(html_esc "$alt")"
+  fi
+  rm -f "$qr_file"
+}
+
 mkdir -p "$(dirname "$OUT")"
 
 DOMAIN="${DOMAIN:-}"
@@ -30,7 +41,6 @@ PUBLIC_IP="${PUBLIC_IP:-UNKNOWN}"
 NOW=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 MIERU_PORT_RANGE="${MIERU_PORT_RANGE:-40000-40010}"
 VLESS_PORT="${VLESS_PORT:-59684}"
-VLESS_DEST="${VLESS_DEST:-www.cloudflare.com}"
 
 CARDS=""
 PORTS="80/tcp, 443/tcp"
@@ -40,13 +50,12 @@ if enabled "${NAIVE_ENABLED:-1}"; then
   CARDS="${CARDS}
 <article class=\"card\">
   <header><div><p class=\"kicker\">HTTPS · 443</p><h2>NaiveProxy</h2></div></header>
-  $(uri_block "$naive_link")
-  <ul>
-    <li>host <code>$(html_esc "$DOMAIN")</code></li>
-    <li>port <code>443</code> · TLS</li>
-    <li>user <code>$(html_esc "$USER")</code></li>
-    <li>клиент: naiveproxy, NekoBox, Hiddify</li>
-  </ul>
+  <div class=\"split\">
+    <div>
+      $(uri_block "$naive_link")
+    </div>
+    $(qr_img "$naive_link" "NaiveProxy")
+  </div>
 </article>"
 fi
 
@@ -56,74 +65,52 @@ if enabled "${MIERU_ENABLED:-1}"; then
   CARDS="${CARDS}
 <article class=\"card\">
   <header><div><p class=\"kicker\">TCP/UDP · $(html_esc "$MIERU_PORT_RANGE")</p><h2>mieru</h2></div></header>
-  $(uri_block "$mieru_link")
-  <ul>
-    <li>host <code>$(html_esc "$PUBLIC_IP")</code></li>
-    <li>ports <code>$(html_esc "$MIERU_PORT_RANGE")</code> TCP и UDP</li>
-    <li>user <code>$(html_esc "$USER")</code></li>
-    <li>mtu <code>1400</code> · multiplexing HIGH</li>
-    <li>клиент: mieru, NekoBox</li>
-  </ul>
+  <div class=\"split\">
+    <div>
+      $(uri_block "$mieru_link")
+    </div>
+    $(qr_img "$mieru_link" "mieru")
+  </div>
 </article>"
 fi
 
 if enabled "${TELEGRAM_ENABLED:-1}"; then
   tg_http="https://t.me/webproxy?server=${DOMAIN}&secret=${TPROXY_SECRET}"
   tg_app="tg://webproxy?server=${DOMAIN}&secret=${TPROXY_SECRET}"
-  qr=""
-  qr_file=$(mktemp)
-  if qrencode -o "$qr_file" -t PNG -s 5 -m 1 "$tg_http" 2>/dev/null; then
-    qr_b64=$(base64 -w0 "$qr_file")
-    qr="<img class=\"qr\" src=\"data:image/png;base64,${qr_b64}\" alt=\"QR\" width=\"168\" height=\"168\">"
-  fi
-  rm -f "$qr_file"
   CARDS="${CARDS}
 <article class=\"card\">
   <header><div><p class=\"kicker\">WEB · 443</p><h2>Telegram Desktop</h2></div></header>
   <div class=\"split\">
     <div>
-      $(uri_block "$DOMAIN" "Hostname")
-      $(uri_block "$TPROXY_SECRET" "Secret")
       $(uri_block "$tg_http" "t.me")
       $(uri_block "$tg_app" "tg://")
-      <ul>
-        <li>тип WEB · hostname без схемы и порта</li>
-        <li>secret 32 hex · TLS 443</li>
-        <li>клиент: Telegram Desktop</li>
-      </ul>
     </div>
-    ${qr}
+    $(qr_img "$tg_http" "Telegram")
   </div>
 </article>"
 fi
 
 if enabled "${VLESS_ENABLED:-1}"; then
   vless_link=""
-  vless_sni="$VLESS_DEST"
-  vless_fp="${VLESS_FP:-edge}"
   if [ -f "$VLESS_ENV" ]; then
     vless_link=$(sed -n 's/^link=//p' "$VLESS_ENV" | sed "s/HOST/${PUBLIC_IP}/g")
-    vless_sni=$(sed -n 's/^sni=//p' "$VLESS_ENV")
-    vless_sni="${vless_sni:-$VLESS_DEST}"
-    vless_fp=$(sed -n 's/^fp=//p' "$VLESS_ENV")
   fi
-  vless_fp="${vless_fp:-${VLESS_FP:-edge}}"
   PORTS="${PORTS}, ${VLESS_PORT}/tcp"
   vless_block="<p class=\"muted\">нет client.env — перезапустите контейнер</p>"
+  vless_qr=""
   if [ -n "$vless_link" ]; then
     vless_block=$(uri_block "$vless_link")
+    vless_qr=$(qr_img "$vless_link" "VLESS")
   fi
   CARDS="${CARDS}
 <article class=\"card\">
   <header><div><p class=\"kicker\">REALITY · $(html_esc "$VLESS_PORT")</p><h2>VLESS</h2></div></header>
-  ${vless_block}
-  <ul>
-    <li>host <code>$(html_esc "$PUBLIC_IP")</code></li>
-    <li>port <code>$(html_esc "$VLESS_PORT")</code></li>
-    <li>security <code>reality</code> · flow <code>xtls-rprx-vision</code></li>
-    <li>sni <code>$(html_esc "$vless_sni")</code> · fp <code>$(html_esc "$vless_fp")</code></li>
-    <li>клиент: v2rayN, v2rayNG, Streisand, Hiddify, Happ</li>
-  </ul>
+  <div class=\"split\">
+    <div>
+      ${vless_block}
+    </div>
+    ${vless_qr}
+  </div>
 </article>"
 fi
 
