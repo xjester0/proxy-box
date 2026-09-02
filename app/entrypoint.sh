@@ -400,7 +400,9 @@ NFT
       echo "nft tproxy_backend failed; cap_add NET_ADMIN and drop 2398/${TELEGRAM_STATS_PORT} on the host" >&2
     fi
   fi
+  chmod 644 "${DATA}/mtproxy/proxy-secret" "${DATA}/mtproxy/proxy-multi.conf"
   mtproto-proxy \
+    -u nobody \
     -p "${TELEGRAM_STATS_PORT}" \
     -H 2398 \
     -S "${TPROXY_SECRET}" \
