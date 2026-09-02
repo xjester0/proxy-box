@@ -42,6 +42,11 @@ NOW=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 MIERU_PORT_RANGE="${MIERU_PORT_RANGE:-40000-40010}"
 VLESS_PORT="${VLESS_PORT:-59684}"
 
+if [ -z "${TPROXY_SECRET:-}" ] && [ -f "${DATA:-/data}/state.env" ]; then
+  # shellcheck disable=SC1091
+  . "${DATA:-/data}/state.env"
+fi
+
 CARDS=""
 PORTS="80/tcp, 443/tcp"
 
