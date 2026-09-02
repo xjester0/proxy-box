@@ -132,6 +132,7 @@ PUBLIC_IP="$(detect_ip)"
 umask 077
 cat >"$STATE" <<EOF
 TPROXY_SECRET=${TPROXY_SECRET}
+PUBLIC_IP=${PUBLIC_IP}
 EOF
 chmod 600 "$STATE"
 

@@ -36,16 +36,33 @@ qr_img() {
 
 mkdir -p "$(dirname "$OUT")"
 
+detect_ip() {
+  local ip
+  ip=$(curl -4 -fsS --connect-timeout 5 --max-time 10 https://ifconfig.co/ip 2>/dev/null \
+    || curl -4 -fsS --connect-timeout 5 --max-time 10 https://icanhazip.com 2>/dev/null \
+    || true)
+  ip=$(printf '%s' "$ip" | tr -d '[:space:]')
+  if [ -n "$ip" ]; then
+    printf '%s' "$ip"
+    return
+  fi
+  ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}'
+}
+
 DOMAIN="${DOMAIN:-}"
-PUBLIC_IP="${PUBLIC_IP:-UNKNOWN}"
 NOW=$(date -u '+%Y-%m-%d %H:%M:%S UTC')
 MIERU_PORT_RANGE="${MIERU_PORT_RANGE:-40000-40010}"
 VLESS_PORT="${VLESS_PORT:-59684}"
 
-if [ -z "${TPROXY_SECRET:-}" ] && [ -f "${DATA:-/data}/state.env" ]; then
+if [ -f "${DATA:-/data}/state.env" ]; then
   # shellcheck disable=SC1091
   . "${DATA:-/data}/state.env"
 fi
+
+if [ -z "${PUBLIC_IP:-}" ] || [ "${PUBLIC_IP}" = "UNKNOWN" ]; then
+  PUBLIC_IP="$(detect_ip)"
+fi
+PUBLIC_IP="${PUBLIC_IP:-UNKNOWN}"
 
 CARDS=""
 PORTS="80/tcp, 443/tcp"
