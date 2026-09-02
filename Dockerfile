@@ -37,6 +37,7 @@ FROM debian:bookworm-slim AS bins
 ARG TARGETARCH
 ARG MITA_VERSION=3.36.0
 ARG XRAY_VERSION=25.12.8
+ARG ZOT_VERSION=v2.1.2
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl unzip \
  && rm -rf /var/lib/apt/lists/*
@@ -58,8 +59,16 @@ RUN set -eu; \
       "https://github.com/XTLS/Xray-core/releases/download/v${XRAY_VERSION}/${xray_zip}"; \
     unzip -o /tmp/xray.zip xray -d /out; \
     chmod +x /out/xray
-
-FROM ghcr.io/project-zot/zot:v2.1.2 AS zot
+RUN set -eu; \
+    case "${TARGETARCH}" in \
+      amd64) zot_bin=zot-linux-amd64 ;; \
+      arm64) zot_bin=zot-linux-arm64 ;; \
+      *) echo "unsupported arch ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /out/zot \
+      "https://github.com/project-zot/zot/releases/download/${ZOT_VERSION}/${zot_bin}"; \
+    chmod +x /out/zot; \
+    test -x /out/zot
 
 FROM debian:bookworm-slim
 LABEL org.opencontainers.image.title="proxy-box" \
@@ -76,7 +85,7 @@ COPY --from=tproxy /tproxy-server /usr/local/bin/tproxy-server
 COPY --from=mtproxy /src/objs/bin/mtproto-proxy /usr/local/bin/mtproto-proxy
 COPY --from=bins /out/mita /usr/local/bin/mita
 COPY --from=bins /out/xray /usr/local/bin/xray
-COPY --from=zot /usr/bin/zot /usr/local/bin/zot
+COPY --from=bins /out/zot /usr/local/bin/zot
 COPY app/ /opt/proxy-box/
 
 RUN chmod +x /opt/proxy-box/entrypoint.sh /opt/proxy-box/gen-access.sh /usr/local/bin/*
