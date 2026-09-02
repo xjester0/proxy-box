@@ -1,11 +1,11 @@
 FROM golang:1.25-bookworm AS caddy
-ENV GOTOOLCHAIN=auto
+ENV CGO_ENABLED=0 GOTOOLCHAIN=local
 ARG FORWARDPROXY_REF=naive
-ARG CACHEBUST=2026-09-02
-RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+RUN go install github.com/caddyserver/xcaddy/cmd/xcaddy@v0.4.5
 WORKDIR /build
-RUN echo "cachebust=${CACHEBUST}" \
- && /go/bin/xcaddy build \
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    /go/bin/xcaddy build \
       --with github.com/caddyserver/forwardproxy=github.com/klzgrad/forwardproxy@${FORWARDPROXY_REF}
 
 FROM debian:bookworm-slim AS bins
